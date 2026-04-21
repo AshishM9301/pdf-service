@@ -1,8 +1,11 @@
 import express from "express";
+import cors from "cors";
 import puppeteer, { type Browser } from "puppeteer";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+app.use(cors());
 
 // Singleton browser instance
 let browserInstance: Browser | null = null;
