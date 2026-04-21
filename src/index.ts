@@ -1,22 +1,13 @@
 import express from "express";
 import cors from "cors";
 import puppeteer, { type Browser } from "puppeteer";
-import {
-  Document,
-  Packer,
-  Paragraph,
-  TextRun,
-  HeadingLevel,
-  BorderStyle,
-  Table,
-  TableRow,
-  TableCell,
-  WidthType,
-  AlignmentType,
-  convertInchesToTwip,
-} from "docx";
-import { JSDOM } from "jsdom";
+import { exec } from "child_process";
+import { promisify } from "util";
+import fs from "fs";
+import path from "path";
+import os from "os";
 
+const execAsync = promisify(exec);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -56,97 +47,6 @@ interface GeneratePdfRequest {
       left?: number;
     };
   };
-}
-
-// Parse HTML to DOCX sections
-function parseHtmlToDocx(html: string): Document {
-  const dom = new JSDOM(html);
-  const document = dom.window.document;
-  
-  const children: Paragraph[] = [];
-  
-  // Helper to create a TextRun with basic formatting
-  const parseInlineStyles = (element: Element): TextRun[] => {
-    const runs: TextRun[] = [];
-    const text = element.textContent || "";
-    
-    if (text.trim()) {
-      runs.push(new TextRun({
-        text,
-        font: "Arial",
-        size: 24, // 12pt
-      }));
-    }
-    
-    return runs;
-  };
-
-  // Process each element
-  const processElement = (element: Element): Paragraph | null => {
-    const tagName = element.tagName?.toLowerCase();
-    
-    switch (tagName) {
-      case "h1":
-        return new Paragraph({
-          children: [new TextRun({ text: element.textContent || "", bold: true, size: 48 })],
-          heading: HeadingLevel.HEADING_1,
-        });
-      case "h2":
-        return new Paragraph({
-          children: [new TextRun({ text: element.textContent || "", bold: true, size: 36 })],
-          heading: HeadingLevel.HEADING_2,
-        });
-      case "h3":
-        return new Paragraph({
-          children: [new TextRun({ text: element.textContent || "", bold: true, size: 32 })],
-          heading: HeadingLevel.HEADING_3,
-        });
-      case "p":
-        return new Paragraph({
-          children: parseInlineStyles(element),
-        });
-      case "div":
-      case "span":
-        return new Paragraph({
-          children: parseInlineStyles(element),
-        });
-      case "ul":
-      case "ol":
-        return new Paragraph({
-          children: [new TextRun({ text: element.textContent || "", font: "Arial", size: 24 })],
-        });
-      case "br":
-        return new Paragraph({ children: [] });
-      default:
-        return null;
-    }
-  };
-
-  // Process body content
-  const body = document.body;
-  if (body) {
-    const childrenArray = Array.from(body.children) as Element[];
-    childrenArray.forEach((child) => {
-      const paragraph = processElement(child);
-      if (paragraph) {
-        children.push(paragraph);
-      }
-    });
-  }
-
-  // If no content, add a placeholder
-  if (children.length === 0) {
-    children.push(new Paragraph({
-      children: [new TextRun({ text: "Resume content could not be parsed", font: "Arial", size: 24 })],
-    }));
-  }
-
-  return new Document({
-    sections: [{
-      properties: {},
-      children,
-    }],
-  });
 }
 
 // Health check endpoint
@@ -203,7 +103,7 @@ app.post("/pdf", express.json({ limit: "10mb" }), async (req, res) => {
   }
 });
 
-// DOCX generation endpoint
+// DOCX generation: HTML → PDF → DOCX via LibreOffice
 app.post("/docx", express.json({ limit: "10mb" }), async (req, res) => {
   const startTime = Date.now();
 
@@ -215,8 +115,41 @@ app.post("/docx", express.json({ limit: "10mb" }), async (req, res) => {
       return;
     }
 
-    const doc = parseHtmlToDocx(html as string);
-    const docxBuffer = await Packer.toBuffer(doc);
+    const browser = await getBrowser();
+    const page = await browser.newPage();
+
+    // Convert HTML to PDF
+    await page.setContent(html, { waitUntil: "networkidle0" });
+    const pdfBuffer = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+    });
+    await page.close();
+
+    // Save PDF to temp file
+    const tmpDir = os.tmpdir();
+    const pdfPath = path.join(tmpDir, `resume-${Date.now()}.pdf`);
+    const docxPath = path.join(tmpDir, `resume-${Date.now()}.docx`);
+
+    fs.writeFileSync(pdfPath, Buffer.from(pdfBuffer));
+
+    // Convert PDF to DOCX using LibreOffice
+    await execAsync(
+      `libreoffice --headless --convert-to docx --outdir ${tmpDir} "${pdfPath}"`,
+      { timeout: 60000 }
+    );
+
+    // Read the generated DOCX
+    if (!fs.existsSync(docxPath)) {
+      throw new Error("LibreOffice conversion failed");
+    }
+
+    const docxBuffer = fs.readFileSync(docxPath);
+
+    // Cleanup temp files
+    fs.unlinkSync(pdfPath);
+    fs.unlinkSync(docxPath);
 
     const duration = Date.now() - startTime;
     console.log(`DOCX generated in ${duration}ms`);
@@ -228,7 +161,7 @@ app.post("/docx", express.json({ limit: "10mb" }), async (req, res) => {
       "X-Generation-Time-Ms": duration.toString(),
     });
 
-    res.send(Buffer.from(docxBuffer));
+    res.send(docxBuffer);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("DOCX generation failed:", message);
