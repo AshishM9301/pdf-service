@@ -125,7 +125,7 @@ function parseHtmlToDocx(html: string): Document {
   // Process body content
   const body = document.body;
   if (body) {
-    Array.from(body.children).forEach((child) => {
+    Array.from(body.children).forEach((child: Element) => {
       const paragraph = processElement(child);
       if (paragraph) {
         children.push(paragraph);
