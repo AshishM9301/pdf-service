@@ -135,13 +135,18 @@ app.post("/docx", express.json({ limit: "10mb" }), async (req, res) => {
     fs.writeFileSync(pdfPath, Buffer.from(pdfBuffer));
     console.log(`[DOCX] PDF saved to ${pdfPath}, size: ${pdfBuffer.length}`);
 
-    // Convert PDF to DOC using LibreOffice (MS Word 97 format for better compatibility)
-    const cmd = `soffice --headless --convert-to doc --outdir ${tmpDir} ${pdfPath}`;
+    // Convert PDF to DOC using LibreOffice with unoconv
+    // Set HOME directory for LibreOffice config
+    const homeDir = "/tmp/lo-home";
+    fs.mkdirSync(homeDir, { recursive: true });
+
+    // Use unoconv for better headless conversion
+    const cmd = `HOME=${homeDir} unoconv -f doc -o /tmp/resume-${timestamp}.doc ${pdfPath}`;
     console.log(`[DOCX] Running command: ${cmd}`);
 
     let outputPath = "";
     try {
-      await execAsync(cmd, { timeout: 60000, cwd: tmpDir });
+      await execAsync(cmd, { timeout: 60000, cwd: "/tmp" });
 
       // LibreOffice creates .doc file in the same directory as input
       const docFile = `${tmpDir}/resume-${timestamp}.doc`;
