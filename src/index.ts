@@ -16,6 +16,8 @@ async function getBrowser(): Promise<Browser> {
         "--disable-dev-shm-usage",
         "--disable-accelerated-2d-canvas",
         "--disable-gpu",
+        "--disable-translate",
+        "--disable-extensions",
       ],
       headless: true,
     });
