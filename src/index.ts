@@ -127,44 +127,65 @@ app.post("/docx", express.json({ limit: "10mb" }), async (req, res) => {
     });
     await page.close();
 
-    // Save PDF to temp file
-    const tmpDir = os.tmpdir();
-    const pdfPath = path.join(tmpDir, `resume-${Date.now()}.pdf`);
-    const docxPath = path.join(tmpDir, `resume-${Date.now()}.docx`);
+    // Save PDF to temp file - use /tmp directly for LibreOffice compatibility
+    const tmpDir = "/tmp";
+    const timestamp = Date.now();
+    const pdfPath = `${tmpDir}/resume-${timestamp}.pdf`;
 
     fs.writeFileSync(pdfPath, Buffer.from(pdfBuffer));
+    console.log(`[DOCX] PDF saved to ${pdfPath}, size: ${pdfBuffer.length}`);
 
-    // Convert PDF to DOCX using LibreOffice
-    await execAsync(
-      `libreoffice --headless --convert-to docx --outdir ${tmpDir} "${pdfPath}"`,
-      { timeout: 60000 }
-    );
+    // Convert PDF to DOC using LibreOffice (MS Word 97 format for better compatibility)
+    const cmd = `soffice --headless --convert-to doc --outdir ${tmpDir} ${pdfPath}`;
+    console.log(`[DOCX] Running command: ${cmd}`);
 
-    // Read the generated DOCX
-    if (!fs.existsSync(docxPath)) {
-      throw new Error("LibreOffice conversion failed");
+    let outputPath = "";
+    try {
+      await execAsync(cmd, { timeout: 60000, cwd: tmpDir });
+
+      // LibreOffice creates .doc file in the same directory as input
+      const docFile = `${tmpDir}/resume-${timestamp}.doc`;
+      console.log(`[DOCX] Checking for output at: ${docFile}, exists: ${fs.existsSync(docFile)}`);
+
+      if (fs.existsSync(docFile)) {
+        outputPath = docFile;
+      } else {
+        // LibreOffice might have created it elsewhere, try finding it
+        const files = fs.readdirSync(tmpDir).filter(f => f.startsWith("resume-") && f.endsWith(".doc"));
+        console.log(`[DOCX] Found .doc files in /tmp:`, files);
+        if (files.length > 0) {
+          outputPath = `${tmpDir}/${files[0]}`;
+        } else {
+          throw new Error(`LibreOffice conversion failed - no output file found`);
+        }
+      }
+    } catch (loErr) {
+      console.error("[DOCX] LibreOffice error:", loErr);
+      // Clean up
+      if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath);
+      throw new Error(`LibreOffice conversion failed: ${loErr}`);
     }
 
-    const docxBuffer = fs.readFileSync(docxPath);
+    const docBuffer = fs.readFileSync(outputPath);
 
     // Cleanup temp files
     fs.unlinkSync(pdfPath);
-    fs.unlinkSync(docxPath);
+    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
 
     const duration = Date.now() - startTime;
-    console.log(`DOCX generated in ${duration}ms`);
+    console.log(`[DOCX] Generated in ${duration}ms, size: ${docBuffer.length}`);
 
     res.set({
-      "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "Content-Disposition": "attachment; filename=resume.docx",
-      "Content-Length": docxBuffer.length,
+      "Content-Type": "application/vnd.ms-word",
+      "Content-Disposition": "attachment; filename=resume.doc",
+      "Content-Length": docBuffer.length,
       "X-Generation-Time-Ms": duration.toString(),
     });
 
-    res.send(docxBuffer);
+    res.send(docBuffer);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    console.error("DOCX generation failed:", message);
+    console.error("[DOCX] Generation failed:", message);
     res.status(500).json({ error: "DOCX generation failed", details: message });
   }
 });
