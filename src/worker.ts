@@ -120,13 +120,20 @@ async function generatePdf(job: PdfJob): Promise<{ pdf: string } | { error: stri
 }
 
 // --- Worker loop ---
+let pollTimer: NodeJS.Timeout | null = null;
+const POLL_INTERVAL_MS = 500;
+
 async function run(): Promise<void> {
   console.log("PDF worker started. Waiting for jobs...");
 
-  while (true) {
+  const loop = async (): Promise<void> => {
     try {
       const job = await popPdfJob();
-      if (!job) continue;
+      if (!job) {
+        // No job available — wait before next poll
+        pollTimer = setTimeout(loop, POLL_INTERVAL_MS);
+        return;
+      }
 
       console.log(`Processing job ${job.id}...`);
       const startTime = Date.now();
@@ -164,15 +171,19 @@ async function run(): Promise<void> {
       }
     } catch (err) {
       console.error("Worker loop error:", err instanceof Error ? err.message : err);
-      // Brief pause before retrying to avoid tight error loop
-      await new Promise((r) => setTimeout(r, 1000));
     }
-  }
+
+    // Always schedule next poll, even after error
+    pollTimer = setTimeout(loop, POLL_INTERVAL_MS);
+  };
+
+  loop();
 }
 
 // Graceful shutdown
 process.on("SIGTERM", async () => {
   console.log("Worker shutting down...");
+  if (pollTimer) clearTimeout(pollTimer);
   if (browserInstance) {
     await browserInstance.close();
   }

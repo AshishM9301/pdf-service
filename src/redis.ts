@@ -35,6 +35,7 @@ export interface PdfResult {
   error?: string;
   createdAt: string;
   completedAt?: string;
+  [key: string]: unknown;
 }
 
 // --- Helpers ---
@@ -43,9 +44,9 @@ export async function pushPdfJob(job: PdfJob): Promise<void> {
 }
 
 export async function popPdfJob(): Promise<PdfJob | null> {
-  const result = await redis.brpop(PDF_QUEUE_KEY, 0);
-  if (!result) return null;
-  const [, raw] = result as [string, string];
+  // Use rpop — reliable queue pop (FIFO via lpush/rpop)
+  const raw = await redis.rpop<string>(PDF_QUEUE_KEY);
+  if (!raw) return null;
   return JSON.parse(raw) as PdfJob;
 }
 
