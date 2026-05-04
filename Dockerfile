@@ -3,7 +3,7 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Install LibreOffice for PDF to DOCX conversion, plus all dependencies for Puppeteer
+# Install dependencies for Puppeteer and PDF manipulation
 RUN apt-get update && apt-get install -y \
     libc6 \
     libgcc1 \
@@ -29,11 +29,9 @@ RUN apt-get update && apt-get install -y \
     libpango-1.0-0 \
     libcairo2 \
     libatspi2.0-0 \
-    libreoffice \
-    libreoffice-writer \
-    unoconv \
+    libpython3.11 \
     python3 \
-    python3-uno \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Puppeteer with @sparticuz/chromium (bundled Chromium)
@@ -50,4 +48,4 @@ ENV PUPPETEER_NO_SANDBOX=1
 
 EXPOSE 3000
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/server.js"]

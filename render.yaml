@@ -3,11 +3,25 @@
 
 services:
   - type: web
-    name: pdf-service
+    name: pdf-server
     env: node
     region: oregon
     buildCommand: npm install && npm run build
-    startCommand: node dist/index.js
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+
+  - type: worker
+    name: pdf-worker
+    env: node
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:worker
     envVars:
       - key: NODE_ENV
         value: production
@@ -15,3 +29,7 @@ services:
         value: "1"
       - key: PUPPETEER_NO_CHROMIUM_DOWNLOAD
         value: "1"
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
