@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { v4 as uuidv4 } from "uuid";
-import { pushPdfJob, getPdfResult, MAX_PDF_SIZE_BYTES, type PdfJob } from "./redis.js";
+import { pushPdfJob, getPdfResult, getQueueInfo, MAX_PDF_SIZE_BYTES, type PdfJob } from "./redis.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -77,9 +77,12 @@ app.get("/pdf/:jobId", async (req, res) => {
     }
 
     if (result.status === "pending") {
+      const queueInfo = await getQueueInfo(jobId);
       res.status(202).json({
         jobId,
         status: "pending",
+        queuePosition: queueInfo?.position ?? null,
+        queueTotal: queueInfo?.total ?? null,
         message: "PDF is still generating...",
       });
       return;

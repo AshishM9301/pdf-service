@@ -63,3 +63,20 @@ export async function getPdfResult(id: string): Promise<PdfResult | null> {
   if (!result || Object.keys(result).length === 0) return null;
   return result;
 }
+
+export async function getQueueInfo(jobId: string): Promise<{ position: number; total: number } | null> {
+  const queue = await redis.lrange<string>(PDF_QUEUE_KEY, 0, -1);
+  if (!queue || queue.length === 0) return null;
+
+  const idx = queue.findIndex((item) => {
+    try {
+      const parsed = JSON.parse(item) as PdfJob;
+      return parsed.id === jobId;
+    } catch {
+      return false;
+    }
+  });
+
+  if (idx === -1) return null;
+  return { position: idx + 1, total: queue.length };
+}
