@@ -26,15 +26,43 @@ export interface PdfJob {
     };
   };
   createdAt: string;
+  webhook?: {
+    url: string;
+    triggerOnStatus: string[];
+  };
+}
+
+export interface WebhookPayload {
+  jobId: string;
+  status: "done" | "error" | "size_exceeded";
+  pdf?: string;
+  error?: string;
+  details?: string;
+}
+
+export async function callWebhook(webhook: NonNullable<PdfJob["webhook"]>, payload: WebhookPayload): Promise<void> {
+  try {
+    await fetch(webhook.url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-pdf-service-secret": process.env.PDF_SERVICE_WEBHOOK_SECRET ?? "",
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.error(`[Webhook] Failed to call ${webhook.url}:`, err instanceof Error ? err.message : err);
+  }
 }
 
 export interface PdfResult {
   id: string;
-  status: "pending" | "done" | "error" | "size_exceeded";
+  status: "pending" | "processing" | "done" | "error" | "size_exceeded";
   pdf?: string; // base64 encoded PDF
   error?: string;
   createdAt: string;
   completedAt?: string;
+  claimedAt?: string; // when worker picked up this job
   [key: string]: unknown;
 }
 
@@ -47,6 +75,8 @@ export async function popPdfJob(): Promise<PdfJob | null> {
   // Use rpop — reliable queue pop (FIFO via lpush/rpop)
   const raw = await redis.rpop<string>(PDF_QUEUE_KEY);
   if (!raw) return null;
+  // Upstash Redis auto-parses JSON strings on retrieval, so raw may already be an object
+  if (typeof raw === "object") return raw as PdfJob;
   return JSON.parse(raw) as PdfJob;
 }
 
@@ -64,14 +94,58 @@ export async function getPdfResult(id: string): Promise<PdfResult | null> {
   return result;
 }
 
+export async function setJobProcessing(id: string): Promise<void> {
+  await redis.hset(`${PDF_RESULT_PREFIX}${id}`, {
+    status: "processing",
+    claimedAt: new Date().toISOString(),
+  });
+  await redis.expire(`${PDF_RESULT_PREFIX}${id}`, RESULT_TTL_SECONDS);
+}
+
+export async function getStaleProcessingJobs(): Promise<string[]> {
+  const keys = await redis.keys(`${PDF_RESULT_PREFIX}*`);
+  const staleIds: string[] = [];
+  const STALE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+  for (const key of keys) {
+    const result = await redis.hgetall<PdfResult>(key);
+    if (
+      result &&
+      result.status === "processing" &&
+      result.claimedAt
+    ) {
+      const claimedTime = new Date(result.claimedAt).getTime();
+      if (Date.now() - claimedTime > STALE_THRESHOLD_MS) {
+        // Extract job id from key
+        const id = key.replace(PDF_RESULT_PREFIX, "");
+        staleIds.push(id);
+      }
+    }
+  }
+
+  return staleIds;
+}
+
+export async function recoverJob(id: string): Promise<void> {
+  await redis.hset(`${PDF_RESULT_PREFIX}${id}`, {
+    status: "pending",
+    claimedAt: null as unknown as string,
+  });
+}
+
+export async function getQueueLength(): Promise<number> {
+  const queue = await redis.lrange<string>(PDF_QUEUE_KEY, 0, -1);
+  return queue?.length ?? 0;
+}
+
 export async function getQueueInfo(jobId: string): Promise<{ position: number; total: number } | null> {
   const queue = await redis.lrange<string>(PDF_QUEUE_KEY, 0, -1);
   if (!queue || queue.length === 0) return null;
 
   const idx = queue.findIndex((item) => {
     try {
-      const parsed = JSON.parse(item) as PdfJob;
-      return parsed.id === jobId;
+      const parsed = typeof item === "string" ? JSON.parse(item) : item;
+      return (parsed as PdfJob).id === jobId;
     } catch {
       return false;
     }

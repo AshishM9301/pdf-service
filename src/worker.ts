@@ -1,5 +1,6 @@
+import "dotenv/config";
 import puppeteer, { type Browser } from "puppeteer";
-import { popPdfJob, setPdfResult, MAX_PDF_SIZE_BYTES, type PdfJob } from "./redis.js";
+import { popPdfJob, setPdfResult, setJobProcessing, getStaleProcessingJobs, recoverJob, MAX_PDF_SIZE_BYTES, type PdfJob, callWebhook } from "./redis.js";
 
 // --- Semaphore ---
 class Semaphore {
@@ -124,6 +125,18 @@ let pollTimer: NodeJS.Timeout | null = null;
 const POLL_INTERVAL_MS = 500;
 
 async function run(): Promise<void> {
+  console.log("PDF worker started. Recovering stale jobs...");
+
+  // Recover orphaned jobs from previous crashed workers
+  const staleJobIds = await getStaleProcessingJobs();
+  for (const jobId of staleJobIds) {
+    await recoverJob(jobId);
+    console.log(`Recovered orphaned job: ${jobId}`);
+  }
+  if (staleJobIds.length > 0) {
+    console.log(`Recovered ${staleJobIds.length} stale job(s)`);
+  }
+
   console.log("PDF worker started. Waiting for jobs...");
 
   const loop = async (): Promise<void> => {
@@ -138,6 +151,9 @@ async function run(): Promise<void> {
       console.log(`Processing job ${job.id}...`);
       const startTime = Date.now();
 
+      // Mark job as processing BEFORE starting work (enables crash recovery)
+      await setJobProcessing(job.id);
+
       const result = await generatePdf(job);
       const duration = Date.now() - startTime;
 
@@ -150,6 +166,14 @@ async function run(): Promise<void> {
           completedAt: new Date().toISOString(),
         });
         console.log(`Job ${job.id} done in ${duration}ms`);
+        // Call webhook if configured
+        if (job.webhook) {
+          await callWebhook(job.webhook, {
+            jobId: job.id,
+            status: "done",
+            pdf: result.pdf,
+          });
+        }
       } else if (result.sizeExceeded) {
         await setPdfResult(job.id, {
           id: job.id,
@@ -159,6 +183,14 @@ async function run(): Promise<void> {
           completedAt: new Date().toISOString(),
         });
         console.log(`Job ${job.id} size exceeded in ${duration}ms`);
+        if (job.webhook) {
+          await callWebhook(job.webhook, {
+            jobId: job.id,
+            status: "size_exceeded",
+            error: result.error,
+            details: result.error,
+          });
+        }
       } else {
         await setPdfResult(job.id, {
           id: job.id,
@@ -168,6 +200,13 @@ async function run(): Promise<void> {
           completedAt: new Date().toISOString(),
         });
         console.error(`Job ${job.id} failed:`, result.error);
+        if (job.webhook) {
+          await callWebhook(job.webhook, {
+            jobId: job.id,
+            status: "error",
+            error: result.error,
+          });
+        }
       }
     } catch (err) {
       console.error("Worker loop error:", err instanceof Error ? err.message : err);

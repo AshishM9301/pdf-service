@@ -1,7 +1,8 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { v4 as uuidv4 } from "uuid";
-import { pushPdfJob, getPdfResult, getQueueInfo, MAX_PDF_SIZE_BYTES, type PdfJob } from "./redis.js";
+import { pushPdfJob, getPdfResult, getQueueInfo, getQueueLength, MAX_PDF_SIZE_BYTES, type PdfJob } from "./redis.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -17,7 +18,12 @@ app.get("/health", (_req, res) => {
 // Submit PDF job
 app.post("/pdf", async (req, res) => {
   try {
-    const { html, options } = req.body as PdfJob;
+    const { html, options, jobId, webhook } = req.body as {
+      html: string;
+      options?: PdfJob["options"];
+      jobId?: string;
+      webhook?: PdfJob["webhook"];
+    };
 
     if (!html || typeof html !== "string") {
       res.status(400).json({ error: "HTML content is required" });
@@ -38,11 +44,15 @@ app.post("/pdf", async (req, res) => {
       return;
     }
 
+    // Use provided jobId (from Next.js API) or generate our own
+    const id = jobId ?? uuidv4();
+
     const job: PdfJob = {
-      id: uuidv4(),
+      id,
       html,
       options: options ?? {},
       createdAt: new Date().toISOString(),
+      ...(webhook ? { webhook } : {}),
     };
 
     await pushPdfJob(job);
@@ -56,6 +66,20 @@ app.post("/pdf", async (req, res) => {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to queue PDF job:", message);
     res.status(500).json({ error: "Failed to queue PDF job", details: message });
+  }
+});
+
+// Get PDF result (polling)
+app.get("/pdf/status", async (_req, res) => {
+  try {
+    const queueLength = await getQueueLength();
+    res.json({
+      mode: "async",
+      queueLength,
+      workerUp: true,
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to get status" });
   }
 });
 
