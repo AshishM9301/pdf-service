@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { v4 as uuidv4 } from "uuid";
-import { pushPdfJob, getPdfResult, getQueueInfo, getQueueLength, MAX_PDF_SIZE_BYTES, type PdfJob } from "./redis";
+import { pushPdfJob, getPdfResult, getQueueInfo, getQueueLength, MAX_PDF_SIZE_BYTES, type PdfJob } from "./redis.js";
 import dotenv from "dotenv";
 
 dotenv.config();
