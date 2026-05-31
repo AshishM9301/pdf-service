@@ -15,6 +15,10 @@ services:
         sync: false
       - key: UPSTASH_REDIS_REST_TOKEN
         sync: false
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
+      - key: PDF_SERVICE_WEBHOOK_SECRET
+        sync: false
 
   - type: worker
     name: pdf-worker

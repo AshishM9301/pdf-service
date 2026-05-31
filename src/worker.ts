@@ -1,5 +1,7 @@
 import puppeteer, { type Browser } from "puppeteer";
 import { popPdfJob, setPdfResult, setJobProcessing, getStaleProcessingJobs, recoverJob, MAX_PDF_SIZE_BYTES, type PdfJob, callWebhook } from "./redis.js";
+import dotenv from "dotenv";
+dotenv.config();
 
 // --- Semaphore ---
 class Semaphore {

@@ -1,10 +1,12 @@
 import express from "express";
 import cors from "cors";
 import { v4 as uuidv4 } from "uuid";
-import { pushPdfJob, getPdfResult, getQueueInfo, getQueueLength, MAX_PDF_SIZE_BYTES, type PdfJob } from "./redis.js";
+import { pushPdfJob, getPdfResult, getQueueInfo, getQueueLength, MAX_PDF_SIZE_BYTES, type PdfJob } from "./redis";
+import dotenv from "dotenv";
 
+dotenv.config();
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
@@ -107,6 +109,15 @@ app.get("/pdf/:jobId", async (req, res) => {
         queuePosition: queueInfo?.position ?? null,
         queueTotal: queueInfo?.total ?? null,
         message: "PDF is still generating...",
+      });
+      return;
+    }
+
+    if (result.status === "processing") {
+      res.status(202).json({
+        jobId,
+        status: "processing",
+        message: "PDF is being generated...",
       });
       return;
     }
